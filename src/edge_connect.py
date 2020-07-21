@@ -1,12 +1,63 @@
 import os
 import numpy as np
 import torch
+import cv2
+import random
 from torch.utils.data import DataLoader
-from .dataset import Dataset
+from .dataset import Dataset, InMemoryDataset
 from .models import EdgeModel, InpaintingModel
 from .utils import Progbar, create_dir, stitch_images, imsave
 from .metrics import PSNR, EdgeAccuracy
+from .config import Config
 
+class InPainter():
+    def __init__(self, model_path='./checkpoints/places2'):
+        config_path = os.path.join(model_path, 'config.yml')
+        config = Config(config_path)
+        config.MODE = 2
+        config.MODEL = 3
+        config.INPUT_SIZE = 0
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(str(e) for e in config.GPU)
+        # init device
+        if torch.cuda.is_available():
+            config.DEVICE = torch.device("cuda")
+            torch.backends.cudnn.benchmark = True   # cudnn auto-tuner
+        else:
+            config.DEVICE = torch.device("cpu")
+        cv2.setNumThreads(0)
+        torch.manual_seed(config.SEED)
+        torch.cuda.manual_seed_all(config.SEED)
+        np.random.seed(config.SEED)
+        random.seed(config.SEED)
+        # build the model and initialize
+        model = EdgeConnect(config)
+        model.load()
+        model.edge_model.eval()
+        model.inpaint_model.eval()
+        self.model = model
+        self.config = config
+
+    def inpaint(self, images, masks):
+        test_dataset = InMemoryDataset(self.config, images, masks)
+
+        model = self.config.MODEL
+        test_loader = DataLoader(
+            dataset=test_dataset,
+            batch_size=1,
+        )
+        index = 0
+        out = []
+        for items in test_loader:
+            images, images_gray, edges, masks = self.model.cuda(*items)
+            index += 1
+
+            edges = self.model.edge_model(images_gray, edges, masks).detach()
+            outputs = self.model.inpaint_model(images, edges, masks)
+            outputs_merged = (outputs * masks) + (images * (1 - masks))
+
+            output = self.model.postprocess(outputs_merged)[0]
+            out.append(output.cpu())
+        return out
 
 class EdgeConnect():
     def __init__(self, config):

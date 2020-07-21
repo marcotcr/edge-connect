@@ -2,11 +2,14 @@ import os
 import yaml
 
 class Config(dict):
-    def __init__(self, config_path):
-        with open(config_path, 'r') as f:
-            self._yaml = f.read()
-            self._dict = yaml.load(self._yaml)
-            self._dict['PATH'] = os.path.dirname(config_path)
+    def __init__(self, config_path=None):
+        if config_path:
+            with open(config_path, 'r') as f:
+                self._yaml = f.read()
+                self._dict = yaml.load(self._yaml)
+                self._dict['PATH'] = os.path.dirname(config_path)
+        else:
+            self._dict = {}
 
     def __getattr__(self, name):
         if self._dict.get(name) is not None:
